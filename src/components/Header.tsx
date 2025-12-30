@@ -18,7 +18,7 @@ export const Header = () => {
             MP4 Patcher
           </h1>
           <p className="text-sm text-muted-foreground font-mono tracking-wider">
-            by Mel .co
+            developed by esgroup
           </p>
         </div>
       </div>
