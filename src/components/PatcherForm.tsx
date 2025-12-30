@@ -1,13 +1,14 @@
-import { useState, useEffect } from "react";
-import { Wand2, RotateCcw, Download, Loader2 } from "lucide-react";
+import { useState, useEffect, useCallback } from "react";
+import { Wand2, RotateCcw, Download, Loader2, FileVideo } from "lucide-react";
 import { FileDropZone } from "./FileDropZone";
 import { FPSInput } from "./FPSInput";
 import { ActionButton } from "./ActionButton";
 import { toast } from "sonner";
-import { useFFmpeg } from "@/hooks/useFFmpeg";
+import { detectFPS, patchMP4, reversePatchMP4 } from "@/lib/mp4-patcher";
 
 export const PatcherForm = () => {
   const [inputFile, setInputFile] = useState<File | null>(null);
+  const [inputData, setInputData] = useState<Uint8Array | null>(null);
   const [outputName, setOutputName] = useState("");
   const [desiredFPS, setDesiredFPS] = useState("");
   const [originalFPS, setOriginalFPS] = useState<number | null>(null);
@@ -15,88 +16,94 @@ export const PatcherForm = () => {
   const [mode, setMode] = useState<"apply" | "reverse" | null>(null);
   const [processedBlob, setProcessedBlob] = useState<Blob | null>(null);
   const [detectingFPS, setDetectingFPS] = useState(false);
+  const [patchLogs, setPatchLogs] = useState<string[]>([]);
+  const [reverseFPS, setReverseFPS] = useState("");
+  const [showReverseInput, setShowReverseInput] = useState(false);
 
-  const { load, loaded, loading, progress, getVideoFPS, patchVideo, reversePatch } = useFFmpeg();
-
-  // Auto-load ffmpeg on mount
-  useEffect(() => {
-    load();
-  }, [load]);
-
-  // Detect FPS when file is selected
-  useEffect(() => {
-    const detectFPS = async () => {
-      if (!inputFile || !loaded) return;
-      
-      setDetectingFPS(true);
-      setOriginalFPS(null);
-      
-      try {
-        const fps = await getVideoFPS(inputFile);
-        if (fps) {
-          setOriginalFPS(fps);
-          toast.success(`Detected original FPS: ${fps}`);
-        } else {
-          toast.error("Could not detect FPS from video");
-        }
-      } catch (error) {
-        console.error("FPS detection error:", error);
-        toast.error("Error detecting video FPS");
-      }
-      
-      setDetectingFPS(false);
-    };
-
-    detectFPS();
-  }, [inputFile, loaded, getVideoFPS]);
-
-  const handleFileChange = (file: File | null) => {
+  // Read file and detect FPS when file is selected
+  const handleFileChange = useCallback(async (file: File | null) => {
     setInputFile(file);
     setProcessedBlob(null);
     setOriginalFPS(null);
-  };
+    setInputData(null);
+    setPatchLogs([]);
+    setShowReverseInput(false);
+    setReverseFPS("");
+
+    if (!file) return;
+
+    setDetectingFPS(true);
+
+    try {
+      // Read file into ArrayBuffer
+      const arrayBuffer = await file.arrayBuffer();
+      const data = new Uint8Array(arrayBuffer);
+      setInputData(data);
+
+      // Detect FPS from the binary data
+      const fps = detectFPS(data);
+      if (fps) {
+        setOriginalFPS(fps);
+        toast.success(`Detected original FPS: ${fps}`);
+      } else {
+        toast.error("Could not detect FPS from video. Please check if it's a valid MP4.");
+      }
+    } catch (error) {
+      console.error("Error reading file:", error);
+      toast.error("Error reading video file");
+    }
+
+    setDetectingFPS(false);
+  }, []);
 
   const handleApplyPatch = async () => {
-    if (!inputFile || !desiredFPS) {
+    if (!inputFile || !inputData || !desiredFPS) {
       toast.error("Please select an input file and enter desired FPS");
       return;
     }
 
-    const fps = parseFloat(desiredFPS);
-    if (isNaN(fps) || fps <= 0) {
+    const targetFPS = parseFloat(desiredFPS);
+    if (isNaN(targetFPS) || targetFPS <= 0) {
       toast.error("Please enter a valid FPS value");
       return;
     }
 
-    if (!loaded) {
-      toast.error("FFmpeg is still loading, please wait...");
+    if (!originalFPS) {
+      toast.error("Could not detect original FPS. Cannot apply patch.");
       return;
     }
 
     setIsProcessing(true);
     setMode("apply");
     setProcessedBlob(null);
+    setPatchLogs([]);
 
     try {
-      const outName = outputName || inputFile.name.replace(".mp4", "_patched.mp4");
-      const blob = await patchVideo(inputFile, fps, outName);
+      // Run patching in a setTimeout to allow UI to update
+      await new Promise(resolve => setTimeout(resolve, 50));
+
+      const { patchedData, logs, success } = patchMP4(inputData, originalFPS, targetFPS);
       
-      if (blob) {
+      setPatchLogs(logs);
+
+      if (success) {
+        const blob = new Blob([new Uint8Array(patchedData)], { type: "video/mp4" });
         setProcessedBlob(blob);
         toast.success(
           <div className="space-y-1">
             <p className="font-medium">Patch Applied Successfully!</p>
             <p className="text-xs text-muted-foreground">
-              FPS changed from {originalFPS || "unknown"} to {fps}
+              FPS changed from {originalFPS} to {targetFPS}
             </p>
           </div>
         );
       } else {
-        toast.error("Failed to process video");
+        toast.error("Failed to patch video. Check logs for details.");
       }
     } catch (error) {
       console.error("Processing error:", error);
       toast.error("Error processing video");
+      setPatchLogs(prev => [...prev, `Error: ${error}`]);
     }
 
     setIsProcessing(false);
@@ -104,54 +111,68 @@ export const PatcherForm = () => {
   };
 
   const handleReversePatch = async () => {
-    if (!inputFile) {
+    if (!inputFile || !inputData) {
       toast.error("Please select an input file");
       return;
     }
 
     if (!originalFPS) {
-      toast.error("Could not detect original FPS to restore");
+      toast.error("Could not detect current FPS");
       return;
     }
 
-    if (!loaded) {
-      toast.error("FFmpeg is still loading, please wait...");
+    // Show reverse FPS input if not already shown
+    if (!showReverseInput) {
+      setShowReverseInput(true);
+      return;
+    }
+
+    const targetFPS = parseFloat(reverseFPS);
+    if (isNaN(targetFPS) || targetFPS <= 0) {
+      toast.error("Please enter a valid FPS to restore");
       return;
     }
 
     setIsProcessing(true);
     setMode("reverse");
     setProcessedBlob(null);
+    setPatchLogs([]);
 
     try {
-      const outName = outputName || inputFile.name.replace(".mp4", "_restored.mp4");
-      const blob = await reversePatch(inputFile, originalFPS, outName);
+      await new Promise(resolve => setTimeout(resolve, 50));
+
+      const { patchedData, logs, success } = reversePatchMP4(inputData, originalFPS, targetFPS);
       
-      if (blob) {
+      setPatchLogs(logs);
+
+      if (success) {
+        const blob = new Blob([new Uint8Array(patchedData)], { type: "video/mp4" });
         setProcessedBlob(blob);
         toast.success(
           <div className="space-y-1">
             <p className="font-medium">Reverse Patch Applied!</p>
             <p className="text-xs text-muted-foreground">
-              FPS restored to {originalFPS}
+              FPS restored from {originalFPS} to {targetFPS}
             </p>
           </div>
         );
       } else {
-        toast.error("Failed to process video");
+        toast.error("Failed to reverse patch. Check logs for details.");
       }
     } catch (error) {
       console.error("Processing error:", error);
       toast.error("Error processing video");
+      setPatchLogs(prev => [...prev, `Error: ${error}`]);
     }
 
     setIsProcessing(false);
     setMode(null);
+    setShowReverseInput(false);
   };
 
   const handleDownload = () => {
     if (!processedBlob) return;
-    
+
     const outName = outputName || (inputFile?.name.replace(".mp4", "_patched.mp4") ?? "output.mp4");
     const url = URL.createObjectURL(processedBlob);
     const a = document.createElement("a");
@@ -161,22 +182,12 @@ export const PatcherForm = () => {
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
-    
+
     toast.success("Download started!");
   };
 
   return (
     <div className="space-y-6">
-      {/* FFmpeg Loading Status */}
-      {loading && (
-        <div className="flex items-center gap-3 p-4 rounded-lg bg-primary/10 border border-primary/20">
-          <Loader2 className="w-5 h-5 text-primary animate-spin" />
-          <span className="text-sm text-foreground font-mono">
-            Loading FFmpeg engine...
-          </span>
-        </div>
-      )}
-
       {/* Input File */}
       <FileDropZone
         label="Input Video"
@@ -192,21 +203,21 @@ export const PatcherForm = () => {
             <>
               <Loader2 className="w-4 h-4 text-accent animate-spin" />
               <span className="text-sm text-muted-foreground font-mono">
-                Detecting original FPS...
+                Analyzing video structure...
               </span>
             </>
           ) : originalFPS ? (
             <>
-              <div className="w-2 h-2 rounded-full bg-accent" />
+              <FileVideo className="w-4 h-4 text-accent" />
               <span className="text-sm text-foreground font-mono">
-                Original FPS: <span className="text-accent font-bold">{originalFPS}</span>
+                Detected FPS: <span className="text-accent font-bold">{originalFPS}</span>
               </span>
             </>
           ) : (
             <>
               <div className="w-2 h-2 rounded-full bg-destructive" />
               <span className="text-sm text-muted-foreground font-mono">
-                Could not detect FPS
+                Could not detect FPS - file may not be a valid MP4
               </span>
             </>
           )}
@@ -242,11 +253,26 @@ export const PatcherForm = () => {
         placeholder="e.g., 24, 30, 60"
       />
 
+      {/* Reverse FPS Input - shows when reverse button is clicked */}
+      {showReverseInput && (
+        <div className="space-y-2 p-4 rounded-lg bg-secondary/30 border border-border/50">
+          <p className="text-sm text-muted-foreground mb-2">
+            Current FPS: <span className="text-accent font-bold">{originalFPS}</span>
+          </p>
+          <FPSInput
+            value={reverseFPS}
+            onChange={setReverseFPS}
+            label="FPS to Restore"
+            placeholder="Enter original FPS to restore"
+          />
+        </div>
+      )}
+
       {/* Action Buttons */}
       <div className="flex flex-col sm:flex-row gap-4 pt-4">
         <ActionButton
           onClick={handleApplyPatch}
-          disabled={!inputFile || !desiredFPS || !loaded}
+          disabled={!inputFile || !desiredFPS || !originalFPS}
           loading={isProcessing && mode === "apply"}
           variant="primary"
           icon={Wand2}
@@ -257,30 +283,38 @@ export const PatcherForm = () => {
 
         <ActionButton
           onClick={handleReversePatch}
-          disabled={!inputFile || !originalFPS || !loaded}
+          disabled={!inputFile || !originalFPS}
           loading={isProcessing && mode === "reverse"}
           variant="secondary"
           icon={RotateCcw}
           className="flex-1"
         >
-          Reverse Patch
+          {showReverseInput ? "Confirm Reverse" : "Reverse Patch"}
         </ActionButton>
       </div>
 
-      {/* Processing indicator with progress */}
+      {/* Processing indicator */}
       {isProcessing && (
-        <div className="space-y-2">
-          <div className="flex items-center justify-between text-sm font-mono">
-            <span className="text-muted-foreground">
-              {mode === "apply" ? "Applying patch..." : "Reversing patch..."}
-            </span>
-            <span className="text-primary">{progress}%</span>
-          </div>
-          <div className="h-2 bg-muted rounded-full overflow-hidden">
-            <div 
-              className="h-full bg-gradient-to-r from-primary to-accent transition-all duration-300"
-              style={{ width: `${progress}%` }}
-            />
+        <div className="flex items-center justify-center gap-3 py-4">
+          <Loader2 className="w-5 h-5 text-primary animate-spin" />
+          <span className="text-sm text-muted-foreground font-mono">
+            {mode === "apply" ? "Patching atoms..." : "Reversing patch..."}
+          </span>
+        </div>
+      )}
+
+      {/* Patch Logs */}
+      {patchLogs.length > 0 && (
+        <div className="p-4 rounded-lg bg-secondary/30 border border-border/30 max-h-40 overflow-y-auto">
+          <h4 className="text-xs font-mono text-muted-foreground mb-2 uppercase tracking-wider">
+            Patch Log
+          </h4>
+          <div className="space-y-1">
+            {patchLogs.map((log, i) => (
+              <p key={i} className="text-xs font-mono text-foreground/70">
+                {log}
+              </p>
+            ))}
           </div>
         </div>
       )}
