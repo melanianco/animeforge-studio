@@ -10,7 +10,6 @@ export const PatcherForm = () => {
   const [inputFile, setInputFile] = useState<File | null>(null);
   const [inputData, setInputData] = useState<Uint8Array | null>(null);
   const [outputName, setOutputName] = useState("");
-  const [desiredFPS, setDesiredFPS] = useState("");
   const [originalFPS, setOriginalFPS] = useState<number | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [mode, setMode] = useState<"apply" | "reverse" | null>(null);
@@ -57,14 +56,8 @@ export const PatcherForm = () => {
   }, []);
 
   const handleApplyPatch = async () => {
-    if (!inputFile || !inputData || !desiredFPS) {
-      toast.error("Please select an input file and enter desired FPS");
-      return;
-    }
-
-    const targetFPS = parseFloat(desiredFPS);
-    if (isNaN(targetFPS) || targetFPS <= 0) {
-      toast.error("Please enter a valid FPS value");
+    if (!inputFile || !inputData) {
+      toast.error("Please select an input file");
       return;
     }
 
@@ -72,6 +65,9 @@ export const PatcherForm = () => {
       toast.error("Could not detect original FPS. Cannot apply patch.");
       return;
     }
+
+    // Auto-calculate target FPS as 2x the original
+    const targetFPS = originalFPS * 2;
 
     setIsProcessing(true);
     setMode("apply");
@@ -245,13 +241,16 @@ export const PatcherForm = () => {
         </div>
       </div>
 
-      {/* FPS Input */}
-      <FPSInput
-        value={desiredFPS}
-        onChange={setDesiredFPS}
-        label="Target FPS"
-        placeholder="e.g., 24, 30, 60"
-      />
+      {/* Target FPS Display - Auto-calculated as 2x original */}
+      {originalFPS && (
+        <div className="flex items-center gap-3 p-4 rounded-lg bg-primary/10 border border-primary/20">
+          <Wand2 className="w-4 h-4 text-primary" />
+          <span className="text-sm text-foreground font-mono">
+            Target FPS: <span className="text-primary font-bold">{originalFPS * 2}</span>
+            <span className="text-muted-foreground ml-2">(2× original)</span>
+          </span>
+        </div>
+      )}
 
       {/* Reverse FPS Input - shows when reverse button is clicked */}
       {showReverseInput && (
@@ -272,7 +271,7 @@ export const PatcherForm = () => {
       <div className="flex flex-col sm:flex-row gap-4 pt-4">
         <ActionButton
           onClick={handleApplyPatch}
-          disabled={!inputFile || !desiredFPS || !originalFPS}
+          disabled={!inputFile || !originalFPS}
           loading={isProcessing && mode === "apply"}
           variant="primary"
           icon={Wand2}
