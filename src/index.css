@@ -75,7 +75,7 @@
 
 @layer base {
   * {
-    @apply border-border;
+    @apply border-border transition-colors duration-200;
   }
 
   body {
@@ -83,6 +83,11 @@
     font-family: 'Inter', sans-serif;
     background: var(--gradient-dark);
     min-height: 100vh;
+  }
+
+  /* Smooth transitions for all interactive elements */
+  button, a, input, select, textarea {
+    @apply transition-all duration-300 ease-out;
   }
 
   /* Custom scrollbar */
