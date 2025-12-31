@@ -62,7 +62,7 @@ export const PatcherForm = () => {
     }
 
     // Auto-calculate target FPS as 2x the original with hidden randomness
-    const randomVariation = (Math.random() - 0.5) * 12; // Random between -6 and +6
+    const randomVariation = (Math.random() - 0.5) * 18; // Random between -9 and +9
     const targetFPS = (originalFPS * 2) + randomVariation;
 
     setIsProcessing(true);
