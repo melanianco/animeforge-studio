@@ -1,7 +1,6 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useCallback } from "react";
 import { Wand2, RotateCcw, Download, Loader2, FileVideo } from "lucide-react";
 import { FileDropZone } from "./FileDropZone";
-import { FPSInput } from "./FPSInput";
 import { ActionButton } from "./ActionButton";
 import { toast } from "sonner";
 import { detectFPS, patchMP4, reversePatchMP4 } from "@/lib/mp4-patcher";
@@ -16,8 +15,6 @@ export const PatcherForm = () => {
   const [processedBlob, setProcessedBlob] = useState<Blob | null>(null);
   const [detectingFPS, setDetectingFPS] = useState(false);
   const [patchLogs, setPatchLogs] = useState<string[]>([]);
-  const [reverseFPS, setReverseFPS] = useState("");
-  const [showReverseInput, setShowReverseInput] = useState(false);
 
   // Read file and detect FPS when file is selected
   const handleFileChange = useCallback(async (file: File | null) => {
@@ -26,8 +23,6 @@ export const PatcherForm = () => {
     setOriginalFPS(null);
     setInputData(null);
     setPatchLogs([]);
-    setShowReverseInput(false);
-    setReverseFPS("");
 
     if (!file) return;
 
@@ -117,17 +112,8 @@ export const PatcherForm = () => {
       return;
     }
 
-    // Show reverse FPS input if not already shown
-    if (!showReverseInput) {
-      setShowReverseInput(true);
-      return;
-    }
-
-    const targetFPS = parseFloat(reverseFPS);
-    if (isNaN(targetFPS) || targetFPS <= 0) {
-      toast.error("Please enter a valid FPS to restore");
-      return;
-    }
+    // Auto-calculate target FPS as detected FPS / 2
+    const targetFPS = originalFPS / 2;
 
     setIsProcessing(true);
     setMode("reverse");
@@ -163,7 +149,6 @@ export const PatcherForm = () => {
 
     setIsProcessing(false);
     setMode(null);
-    setShowReverseInput(false);
   };
 
   const handleDownload = () => {
@@ -252,18 +237,14 @@ export const PatcherForm = () => {
         </div>
       )}
 
-      {/* Reverse FPS Input - shows when reverse button is clicked */}
-      {showReverseInput && (
-        <div className="space-y-2 p-4 rounded-lg bg-secondary/30 border border-border/50">
-          <p className="text-sm text-muted-foreground mb-2">
-            Current FPS: <span className="text-accent font-bold">{originalFPS}</span>
-          </p>
-          <FPSInput
-            value={reverseFPS}
-            onChange={setReverseFPS}
-            label="FPS to Restore"
-            placeholder="Enter original FPS to restore"
-          />
+      {/* Reverse FPS Display - Auto-calculated as detected / 2 */}
+      {originalFPS && (
+        <div className="flex items-center gap-3 p-4 rounded-lg bg-secondary/20 border border-secondary/30">
+          <RotateCcw className="w-4 h-4 text-secondary-foreground" />
+          <span className="text-sm text-foreground font-mono">
+            Reverse Target: <span className="text-secondary-foreground font-bold">{originalFPS / 2}</span>
+            <span className="text-muted-foreground ml-2">(÷2 original)</span>
+          </span>
         </div>
       )}
 
@@ -288,7 +269,7 @@ export const PatcherForm = () => {
           icon={RotateCcw}
           className="flex-1"
         >
-          {showReverseInput ? "Confirm Reverse" : "Reverse Patch"}
+          Reverse Patch
         </ActionButton>
       </div>
 
