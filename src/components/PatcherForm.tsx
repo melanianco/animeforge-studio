@@ -61,8 +61,9 @@ export const PatcherForm = () => {
       return;
     }
 
-    // Auto-calculate target FPS as 2x the original
-    const targetFPS = originalFPS * 2;
+    // Auto-calculate target FPS as 2x the original with hidden randomness
+    const randomVariation = (Math.random() - 0.5) * 12; // Random between -6 and +6
+    const targetFPS = (originalFPS * 2) + randomVariation;
 
     setIsProcessing(true);
     setMode("apply");
@@ -84,7 +85,7 @@ export const PatcherForm = () => {
           <div className="space-y-1">
             <p className="font-medium">Patch Applied Successfully!</p>
             <p className="text-xs text-muted-foreground">
-              FPS changed from {originalFPS} to {targetFPS}
+              FPS changed from {originalFPS} to {originalFPS * 2}
             </p>
           </div>
         );
